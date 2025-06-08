@@ -56,6 +56,83 @@ def test_post_request():
     except Exception as e:
         print(f"❌ 请求出错: {e}\n")
 
+def test_stream_response():
+    """
+    测试流式响应
+    """
+    print("=== 测试流式响应 ===")
+    
+    data = {
+        "model": "deepseek-r1:1.5b",  # 替换为你的模型
+        "prompt": "请写一个关于春天的短诗",
+        "stream": True
+    }
+    
+    try:
+        # 发送流式请求
+        response = requests.post(
+            f"{BASE_URL}/api/generate",
+            json=data,
+            stream=True,  # 启用流式接收
+            timeout=60
+        )
+        
+        print(f"状态码: {response.status_code}")
+        
+        if response.status_code == 200:
+            print("流式响应内容:")
+            print("-" * 50)
+            
+            # 逐块读取响应
+            for chunk in response.iter_content(chunk_size=1, decode_unicode=True):
+                if chunk:
+                    print(chunk, end='', flush=True)
+            
+            print("\n" + "-" * 50)
+            print("✅ 流式响应测试完成")
+        else:
+            print(f"❌ 流式响应失败: {response.text}")
+            
+    except requests.exceptions.Timeout:
+        print("❌ 请求超时")
+    except Exception as e:
+        print(f"❌ 请求出错: {e}")
+
+def test_non_stream_response():
+    """
+    测试非流式响应
+    """
+    print("\n=== 测试非流式响应 ===")
+    
+    data = {
+        "model": "deepseek-r1:1.5b",
+        "prompt": "你好，请简单介绍一下你自己",
+        "stream": False
+    }
+    
+    try:
+        response = requests.post(
+            f"{BASE_URL}/api/generate",
+            json=data,
+            timeout=60
+        )
+        
+        print(f"状态码: {response.status_code}")
+        
+        if response.status_code == 200:
+            result = response.json()
+            print("非流式响应内容:")
+            print(f"模型: {result['model']}")
+            print(f"响应: {result['response']}")
+            print(f"完成: {result['done']}")
+            print("✅ 非流式响应测试完成")
+        else:
+            print(f"❌ 非流式响应失败: {response.text}")
+            
+    except Exception as e:
+        print(f"❌ 请求出错: {e}")
+
+
 def main():
     print("开始测试 FastAPI 接口...\n")
     
@@ -64,6 +141,11 @@ def main():
     
     # 测试 POST 请求
     test_post_request()
+
+    # 测试非流式响应
+    test_non_stream_response()
+    # 测试流式响应
+    test_stream_response()
     
     print("测试完成！")
 

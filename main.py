@@ -69,9 +69,95 @@ async def generate_text(request: OllamaRequest):
         流式响应处理
         """
         return StreamingResponse(
+            stream_ollama_response(request),
+            media_type="text/plain; charset=utf-8",
             )
     else:
-        return
+        return await generate_text_non_stream(request)
+    
+
+async def stream_ollama_response(request: OllamaRequest) -> AsyncGenerator[str, None]:
+    payload = {
+        "model": request.model,
+        "prompt": request.prompt,
+        "stream": True  # 设置为 True 以启用流式响应
+    }
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            async with client.stream("POST", OLLAMA_API_URL, json=payload) as response:
+                response.raise_for_status()
+                
+                async for line in response.aiter_lines():
+                    if line.strip():
+                        try:
+                            # 解析每一行的 JSON 数据
+                            chunk_data = json.loads(line)
+                            
+                            # 提取响应文本
+                            chunk_text = chunk_data.get("response", "")
+                            is_done = chunk_data.get("done", False)
+                            
+                            # 发送文本块
+                            if chunk_text:
+                                yield chunk_text
+                            
+                            # 如果完成，退出循环
+                            if is_done:
+                                break
+                                
+                        except json.JSONDecodeError:
+                            # 跳过无法解析的行
+                            continue
+                            
+    except httpx.HTTPStatusError as e:
+        error_msg = f"Ollama 服务错误: {e.response.status_code}"
+        yield f"data: {json.dumps({'error': error_msg})}\n\n"
+    except httpx.RequestError as e:
+        error_msg = f"连接 Ollama 服务失败: {str(e)}"
+        yield f"data: {json.dumps({'error': error_msg})}\n\n"
+    except Exception as e:
+        error_msg = f"内部错误: {str(e)}"
+        yield f"data: {json.dumps({'error': error_msg})}\n\n"
+        
+async def generate_text_non_stream(request: OllamaRequest) -> OllamaResponse:
+    """
+    非流式响应处理（原有逻辑）
+    """
+    payload = {
+        "model": request.model,
+        "prompt": request.prompt,
+        "stream": False,
+    }
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        try:
+            response = await client.post(OLLAMA_API_URL, json=payload)
+            response.raise_for_status()
+            
+            ollama_data = response.json()
+            
+            if "model" not in ollama_data or "response" not in ollama_data or "done" not in ollama_data:
+                raise HTTPException(status_code=500, detail="从 Ollama 收到的响应格式不正确")
+
+            return OllamaResponse(
+                model=ollama_data.get("model", request.model),
+                response=ollama_data.get("response", ""),
+                done=ollama_data.get("done", False)
+            )
+        except httpx.HTTPStatusError as e:
+            error_detail = f"请求 Ollama 服务失败: {e.response.status_code} - {e.response.text}"
+            if e.response.status_code == 404:
+                error_detail = f"Ollama 模型 '{request.model}' 未找到或 Ollama API 端点 '{OLLAMA_API_URL}' 不存在。"
+            elif e.response.status_code == 400:
+                error_detail = f"向 Ollama 服务发送的请求无效: {e.response.text}"
+            raise HTTPException(status_code=e.response.status_code, detail=error_detail)
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=503, detail=f"无法连接到 Ollama 服务: {e}")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"处理请求时发生内部错误: {str(e)}")
+
+
+
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
